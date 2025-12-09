@@ -1,5 +1,10 @@
 # Fairy2i-W2
 
+## 🔗 Links
+
+- **🤗 Hugging Face Model**: [Fairy2i-W2 on Hugging Face](https://huggingface.co/PKULab1806/Fairy2i-W2)
+- **📄 Paper**: [arXiv Paper](https://arxiv.org/abs/2512.02901)
+
 ## Table of Contents
 
 - [📝 Abstract](#-abstract)
@@ -127,7 +132,7 @@ bash train.sh
 ```
 
 **Note:** For Fairy2i-W2, the training uses fixed parameters:
-- `--quant_method complex_phase_v2` (2-step recursive residual quantization)
+- `--quant_method complex_phase_v2` (1-step recursive residual quantization)
 - `--skip_lm_head False` (lm_head will be replaced)
 
 The training script supports the following arguments:
