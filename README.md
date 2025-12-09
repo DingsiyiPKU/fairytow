@@ -126,6 +126,10 @@ cd train
 bash train.sh
 ```
 
+**Note:** For Fairy2i-W2, the training uses fixed parameters:
+- `--quant_method complex_phase_v2` (2-step recursive residual quantization)
+- `--skip_lm_head False` (lm_head will be replaced)
+
 The training script supports the following arguments:
 - `--quant_method`: QAT quantization method (choices: `bitnet`, `complex_phase_v1`, `complex_phase_v2`, `complex_phase_v3`, `complex_phase_v4`)
 - `--skip_lm_head`: Whether to skip replacement of lm_head layer (default: False)
