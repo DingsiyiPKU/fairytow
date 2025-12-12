@@ -154,6 +154,22 @@ This script:
 
 **Note:** Make sure to update the input paths in `padding_and_cut.py` to point to your sampled dataset directories.
 
+#### Custom DataCollator
+
+The training uses a custom `MyDataCollatorForLanguageModeling` class defined in `train/mydatacollator.py`. This collator is specifically designed to work with the 2048-token aligned data blocks.
+
+**To use the custom DataCollator:**
+
+You can directly copy `train/mydatacollator.py` into `transformers.data.data_collator` module (version-independent). The custom collator handles:
+- Proper label masking for aligned 2048-token blocks
+- EOS token position handling for causal language modeling
+- Compatibility with the pre-processed aligned dataset format
+
+The custom collator is automatically imported in the training script via:
+```python
+from transformers.data.data_collator import MyDataCollatorForLanguageModeling
+```
+
 ### 🏋️ Training
 
 To train a model with QAT, use the training script:
@@ -214,6 +230,7 @@ fairy2i-w2-repo-github/
 ├── train/
 │   ├── train.py                # Training script
 │   ├── train.sh                # Training launch script
+│   ├── mydatacollator.py       # Custom DataCollator for aligned data
 │   └── complexnet_config.yaml  # Accelerate configuration
 └── eval/
     ├── eval_ppl.py             # Perplexity evaluation script
