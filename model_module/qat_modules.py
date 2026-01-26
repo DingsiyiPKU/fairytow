@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from quantization import BitNetQuantSTE, PhaseQuantSTE, PhaseQuantSTE_V2, PhaseQuantSTE_V3, PhaseQuantSTE_V4
+from quantization import BitNetQuantSTE, PhaseQuantSTE, PhaseQuantSTE_V2, PhaseQuantSTE_V3, PhaseQuantSTE_V4, Fairy2w_PhaseQuantSTE, Fairy2w_PhaseQuantSTE_V2, Fairy2w_PhaseQuantSTE_V3, Fairy2w_PhaseQuantSTE_V4, QuantizationConfig
 import math
 
 class QATLinearBitNet(nn.Linear):
@@ -141,12 +141,144 @@ class QATLinearComplexPhaseV4(nn.Linear):
 
         return F.linear(x, A_quant, self.bias)
 
+class QATLinearFairy2wPhaseV1(nn.Linear):
+    """Complex-Phase V1 QAT linear layer"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.in_features % 2 != 0 or self.out_features % 2 != 0:
+            raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
+
+    def forward(self, x):
+        A = self.weight
+        n, m = A.shape[0] // 2, A.shape[1] // 2
+        A11, A12 = A[:n, :m], A[:n, m:]
+        A21, A22 = A[n:, :m], A[n:, m:]
+        
+        U_re = 0.5 * (A11 + A22)
+        U_im = 0.5 * (A21 - A12)
+        W_re = 0.5 * (A11 - A22)
+        W_im = 0.5 * (A12 + A21)
+        
+        U_re_q, U_im_q = Fairy2w_PhaseQuantSTE.apply(U_re, U_im)
+        W_re_q, W_im_q = Fairy2w_PhaseQuantSTE.apply(W_re, W_im)
+        
+        A11_q = W_re_q + U_re_q
+        A12_q = W_im_q - U_im_q
+        A21_q = W_im_q + U_im_q
+        A22_q = -W_re_q + U_re_q
+        
+        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+
+        return F.linear(x, A_quant, self.bias)
+
+class QATLinearFairy2wPhaseV2(nn.Linear):
+    """Complex-Phase V2 QAT linear layer (1-step residual)"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.in_features % 2 != 0 or self.out_features % 2 != 0:
+            raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
+
+    def forward(self, x):
+        A = self.weight
+        n, m = A.shape[0] // 2, A.shape[1] // 2
+        A11, A12 = A[:n, :m], A[:n, m:]
+        A21, A22 = A[n:, :m], A[n:, m:]
+        
+        U_re = 0.5 * (A11 + A22)
+        U_im = 0.5 * (A21 - A12)
+        W_re = 0.5 * (A11 - A22)
+        W_im = 0.5 * (A12 + A21)
+        
+        U_re_q, U_im_q = Fairy2w_PhaseQuantSTE_V2.apply(U_re, U_im)
+        W_re_q, W_im_q = Fairy2w_PhaseQuantSTE_V2.apply(W_re, W_im)
+        
+        A11_q = W_re_q + U_re_q
+        A12_q = W_im_q - U_im_q
+        A21_q = W_im_q + U_im_q
+        A22_q = -W_re_q + U_re_q
+        
+        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+
+        return F.linear(x, A_quant, self.bias)
+
+class QATLinearFairy2wPhaseV3(nn.Linear):
+    """Complex-Phase V3 QAT linear layer (2-step residual)"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.in_features % 2 != 0 or self.out_features % 2 != 0:
+            raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
+
+    def forward(self, x):
+        A = self.weight
+        n, m = A.shape[0] // 2, A.shape[1] // 2
+        A11, A12 = A[:n, :m], A[:n, m:]
+        A21, A22 = A[n:, :m], A[n:, m:]
+        
+        U_re = 0.5 * (A11 + A22)
+        U_im = 0.5 * (A21 - A12)
+        W_re = 0.5 * (A11 - A22)
+        W_im = 0.5 * (A12 + A21)
+        
+        U_re_q, U_im_q = Fairy2w_PhaseQuantSTE_V3.apply(U_re, U_im)
+        W_re_q, W_im_q = Fairy2w_PhaseQuantSTE_V3.apply(W_re, W_im)
+        
+        A11_q = W_re_q + U_re_q
+        A12_q = W_im_q - U_im_q
+        A21_q = W_im_q + U_im_q
+        A22_q = -W_re_q + U_re_q
+        
+        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+
+        return F.linear(x, A_quant, self.bias)
+
+class QATLinearFairy2wPhaseV4(nn.Linear):
+    """Complex-Phase V4 QAT linear layer (3-step residual)"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.in_features % 2 != 0 or self.out_features % 2 != 0:
+            raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
+
+    def forward(self, x):
+        A = self.weight
+        n, m = A.shape[0] // 2, A.shape[1] // 2
+        A11, A12 = A[:n, :m], A[:n, m:]
+        A21, A22 = A[n:, :m], A[n:, m:]
+        
+        U_re = 0.5 * (A11 + A22)
+        U_im = 0.5 * (A21 - A12)
+        W_re = 0.5 * (A11 - A22)
+        W_im = 0.5 * (A12 + A21)
+        
+        U_re_q, U_im_q = Fairy2w_PhaseQuantSTE_V4.apply(U_re, U_im)
+        W_re_q, W_im_q = Fairy2w_PhaseQuantSTE_V4.apply(W_re, W_im)
+        
+        A11_q = W_re_q + U_re_q
+        A12_q = W_im_q - U_im_q
+        A21_q = W_im_q + U_im_q
+        A22_q = -W_re_q + U_re_q
+        
+        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+
+        return F.linear(x, A_quant, self.bias)
+
 METHOD_MAP = {
     'bitnet': QATLinearBitNet,
     'complex_phase_v1': QATLinearComplexPhaseV1,
     'complex_phase_v2': QATLinearComplexPhaseV2,
     'complex_phase_v3': QATLinearComplexPhaseV3,
     'complex_phase_v4': QATLinearComplexPhaseV4,
+    'fairy2w_phase_v1': QATLinearFairy2wPhaseV1,
+    'fairy2w_phase_v2': QATLinearFairy2wPhaseV2,
+    'fairy2w_phase_v3': QATLinearFairy2wPhaseV3,
+    'fairy2w_phase_v4': QATLinearFairy2wPhaseV4,
 }
 
 def replace_modules_for_qat(model: nn.Module, method: str, skip_lm_head: bool = False):
@@ -206,6 +338,159 @@ class InferenceOptimizedBitNet(nn.Linear):
     def forward(self, x):
         self._ensure_quantized()
         return F.linear(x, self.weight, self.bias)
+
+
+class InferenceOptimizedFairy2wPhase(nn.Linear):
+    """Inference-optimized Fairy2w Phase linear layer, supports V1-V4"""
+    def __init__(self, version="v1", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.in_features % 2 != 0 or self.out_features % 2 != 0:
+            raise ValueError("Fairy2w-Phase requires even in/out features.")
+        self._is_quantized = False
+        self._version = version.lower()
+        if self._version not in ["v1", "v2", "v3", "v4"]:
+            raise ValueError(f"Unsupported version: {version}. Must be one of ['v1', 'v2', 'v3', 'v4']")
+    
+    def _ensure_quantized(self):
+        """Ensure weights are quantized, executed only once"""
+        if not self._is_quantized:
+            with torch.no_grad():
+                A = self.weight
+                n, m = A.shape[0] // 2, A.shape[1] // 2
+                A11, A12 = A[:n, :m], A[:n, m:]
+                A21, A22 = A[n:, :m], A[n:, m:]
+                
+                U_re = 0.5 * (A11 + A22)
+                U_im = 0.5 * (A21 - A12)
+                W_re = 0.5 * (A11 - A22)
+                W_im = 0.5 * (A12 + A21)
+                
+                if self._version == "v1":
+                    U_re_q, U_im_q = self._phase_quant_v1(U_re, U_im)
+                    W_re_q, W_im_q = self._phase_quant_v1(W_re, W_im)
+                elif self._version == "v2":
+                    U_re_q, U_im_q = self._phase_quant_v2(U_re, U_im)
+                    W_re_q, W_im_q = self._phase_quant_v2(W_re, W_im)
+                elif self._version == "v3":
+                    U_re_q, U_im_q = self._phase_quant_v3(U_re, U_im)
+                    W_re_q, W_im_q = self._phase_quant_v3(W_re, W_im)
+                elif self._version == "v4":
+                    U_re_q, U_im_q = self._phase_quant_v4(U_re, U_im)
+                    W_re_q, W_im_q = self._phase_quant_v4(W_re, W_im)
+                
+                A11_q = W_re_q + U_re_q
+                A12_q = W_im_q - U_im_q
+                A21_q = W_im_q + U_im_q
+                A22_q = -W_re_q + U_re_q
+                
+                A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+                A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+                A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+                
+                self.weight.data = A_quant
+                self._is_quantized = True
+    
+    def _phase_quant_v1(self, w_real, w_imag):
+        """V1: Fairy2w PhaseQuant (copied from quantization.py Fairy2w_PhaseQuantSTE.forward)"""
+        config = QuantizationConfig()
+        argument = torch.angle(w_real + 1j * w_imag)
+        norm = torch.abs(w_real + 1j * w_imag)
+        mean_norm = norm.mean()
+        threshold = config.mu * mean_norm
+
+        nonzeros = (norm >= threshold)
+        phase_1 = (argument > -math.pi / 3) & (argument <= math.pi / 3) & nonzeros          # 中心在 0°
+        phase_2 = (argument > math.pi / 3) & (argument <= math.pi) & nonzeros               # 中心在 120°
+        phase_3 = (argument <= -math.pi / 3) & nonzeros                                     # 中心在 240°
+
+        s_phase_1 = norm[phase_1].mean() if phase_1.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_2 = norm[phase_2].mean() if phase_2.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_3 = norm[phase_3].mean() if phase_3.any() else torch.tensor(0.0, device=w_real.device)
+        
+        s_phase_1 = torch.clamp(s_phase_1, min=config.clamp_min)
+        s_phase_2 = torch.clamp(s_phase_2, min=config.clamp_min)
+        s_phase_3 = torch.clamp(s_phase_3, min=config.clamp_min)
+
+        qw_real = torch.zeros_like(w_real)
+        qw_imag = torch.zeros_like(w_imag)
+
+        tmp = math.sqrt(3) / 2.0
+        qw_real[phase_1] += 1.0 * s_phase_1
+        qw_real[phase_2] += -0.5 * s_phase_2
+        qw_imag[phase_2] += tmp * s_phase_2
+        qw_real[phase_3] += -0.5 * s_phase_3
+        qw_imag[phase_3] += -tmp * s_phase_3
+
+        return qw_real.to(w_real.dtype), qw_imag.to(w_imag.dtype)
+    
+    def _phase_quant_v1_alter(self, w_real, w_imag):
+        config = QuantizationConfig()
+        argument = torch.angle(w_real + 1j * w_imag)
+        norm = torch.abs(w_real + 1j * w_imag)
+        mean_norm = norm.mean()
+        threshold = config.mu * mean_norm
+
+        nonzeros = (norm >= threshold)
+        phase_1 = (argument > 0) & (argument <= 2 * math.pi / 3) & nonzeros
+        phase_2 = ((argument > 2 * math.pi / 3) | (argument <= -2 * math.pi / 3)) & nonzeros
+        phase_3 = (argument > -2 * math.pi / 3) & (argument <= 0) & nonzeros
+
+        s_phase_1 = norm[phase_1].mean() if phase_1.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_2 = norm[phase_2].mean() if phase_2.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_3 = norm[phase_3].mean() if phase_3.any() else torch.tensor(0.0, device=w_real.device)
+        
+        s_phase_1 = torch.clamp(s_phase_1, min=config.clamp_min)
+        s_phase_2 = torch.clamp(s_phase_2, min=config.clamp_min)
+        s_phase_3 = torch.clamp(s_phase_3, min=config.clamp_min)
+
+        qw_real = torch.zeros_like(w_real)
+        qw_imag = torch.zeros_like(w_imag)
+
+        tmp = math.sqrt(3) / 2.0
+        qw_real[phase_1] += 0.5 * s_phase_1
+        qw_imag[phase_1] += tmp * s_phase_1
+        qw_real[phase_2] += -1.0 * s_phase_2
+        qw_real[phase_3] += 0.5 * s_phase_3
+        qw_imag[phase_3] += -tmp * s_phase_3
+
+        return qw_real.to(w_real.dtype), qw_imag.to(w_imag.dtype)
+    
+    def _phase_quant_v2(self, w_real, w_imag):
+        qw_real_o1, qw_imag_o1 = self._phase_quant_v1(w_real, w_imag)
+        error_real = w_real - qw_real_o1
+        error_imag = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = self._phase_quant_v1_alter(error_real, error_imag)
+        qw_real = qw_real_o1 + qw_real_o2
+        qw_imag = qw_imag_o1 + qw_imag_o2
+        return qw_real, qw_imag
+    
+    def _phase_quant_v3(self, w_real, w_imag):
+        qw_real_o1, qw_imag_o1 = self._phase_quant_v1(w_real, w_imag)
+        error_real_1 = w_real - qw_real_o1
+        error_imag_1 = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = self._phase_quant_v1_alter(error_real_1, error_imag_1)
+        error_real_2 = error_real_1 - qw_real_o2
+        error_imag_2 = error_imag_1 - qw_imag_o2
+        qw_real_o3, qw_imag_o3 = self._phase_quant_v1(error_real_2, error_imag_2)
+        qw_real = qw_real_o1 + qw_real_o2 + qw_real_o3
+        qw_imag = qw_imag_o1 + qw_imag_o2 + qw_imag_o3
+        return qw_real, qw_imag
+    
+    def _phase_quant_v4(self, w_real, w_imag):
+        qw_real_o1, qw_imag_o1 = self._phase_quant_v1(w_real, w_imag)
+        error_real_1 = w_real - qw_real_o1
+        error_imag_1 = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = self._phase_quant_v1_alter(error_real_1, error_imag_1)
+        error_real_2 = error_real_1 - qw_real_o2
+        error_imag_2 = error_imag_1 - qw_imag_o2
+        qw_real_o3, qw_imag_o3 = self._phase_quant_v1(error_real_2, error_imag_2)
+        error_real_3 = error_real_2 - qw_real_o3
+        error_imag_3 = error_imag_2 - qw_imag_o3
+        qw_real_o4, qw_imag_o4 = self._phase_quant_v1_alter(error_real_3, error_imag_3)
+        qw_real = qw_real_o1 + qw_real_o2 + qw_real_o3 + qw_real_o4
+        qw_imag = qw_imag_o1 + qw_imag_o2 + qw_imag_o3 + qw_imag_o4
+        return qw_real, qw_imag
+
 
 class InferenceOptimizedComplexPhase(nn.Linear):
     """Inference-optimized Complex Phase linear layer, supports V1-V4"""
@@ -380,6 +665,32 @@ def convert_to_inference_mode(model):
                 setattr(module, name, new_module)
                 converted_count += 1
                 print(f"  -> Converting ComplexPhase{version.upper()} layer: {full_name}")
+            elif isinstance(child, (QATLinearFairy2wPhaseV1, QATLinearFairy2wPhaseV2, 
+                                   QATLinearFairy2wPhaseV3, QATLinearFairy2wPhaseV4)):
+                if isinstance(child, QATLinearFairy2wPhaseV1):
+                    version = "v1"
+                elif isinstance(child, QATLinearFairy2wPhaseV2):
+                    version = "v2"
+                elif isinstance(child, QATLinearFairy2wPhaseV3):
+                    version = "v3"
+                elif isinstance(child, QATLinearFairy2wPhaseV4):
+                    version = "v4"
+                
+                new_module = InferenceOptimizedFairy2wPhase(
+                    version=version,
+                    in_features=child.in_features, 
+                    out_features=child.out_features, 
+                    bias=child.bias is not None,
+                    device=child.weight.device,
+                    dtype=child.weight.dtype
+                )
+                new_module.weight.data.copy_(child.weight.data)
+                if child.bias is not None:
+                    new_module.bias.data.copy_(child.bias.data)
+                
+                setattr(module, name, new_module)
+                converted_count += 1
+                print(f"  -> Converting Fairy2wPhase{version.upper()} layer: {full_name}")
             else:
                 _convert_module(child, full_name)
     

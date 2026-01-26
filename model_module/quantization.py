@@ -2,6 +2,15 @@ import torch
 import torch.nn as nn
 import math
 
+from dataclasses import dataclass
+
+@dataclass
+class QuantizationConfig:
+    # Quant 参数
+    clamp_min: float = 1e-6
+    mu: float = 1.0 # 
+
+
 @torch.no_grad()
 def quantize_complex_tensor(w_real: torch.Tensor, w_imag: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply PhaseQuant logic to complex weight tensors"""
@@ -35,6 +44,48 @@ def quantize_complex_tensor(w_real: torch.Tensor, w_imag: torch.Tensor) -> tuple
     qw_imag_scaled = qw_imag * s_im
     return qw_real_scaled.to(w_real.dtype), qw_imag_scaled.to(w_imag.dtype)
 
+@torch.no_grad()
+def quantize_complex_tensor_fairy2w(w_real: torch.Tensor, w_imag: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply PhaseQuant logic to complex weight tensors"""
+    config = QuantizationConfig()
+
+    argument = torch.angle(w_real + 1j * w_imag)
+    norm = torch.abs(w_real + 1j * w_imag)
+    mean_norm = norm.mean()
+    threshold = config.mu * mean_norm
+
+    nonzeros = (norm >= threshold)
+    # zeros = (norm < threshold)
+    phase_1 = (argument > -math.pi / 3) & (argument <= math.pi / 3) & nonzeros          # 中心在 0°
+    phase_2 = (argument > math.pi / 3) & (argument <= math.pi) & nonzeros               # 中心在 120°
+    phase_3 = (argument <= -math.pi / 3) & nonzeros               # 中心在 240°
+
+    s_phase_1 = norm[phase_1].mean() if phase_1.any() else torch.tensor(0.0, device=w_real.device)
+    s_phase_2 = norm[phase_2].mean() if phase_2.any() else torch.tensor(0.0, device=w_real.device)
+    s_phase_3 = norm[phase_3].mean() if phase_3.any() else torch.tensor(0.0, device=w_real.device)
+    
+    s_phase_1 = torch.clamp(s_phase_1, min=config.clamp_min)
+    s_phase_2 = torch.clamp(s_phase_2, min=config.clamp_min)
+    s_phase_3 = torch.clamp(s_phase_3, min=config.clamp_min)
+    if torch.isnan(s_phase_1) or torch.isinf(s_phase_1):
+        s_phase_1 = torch.tensor(config.clamp_min, device=w_real.device)
+    if torch.isnan(s_phase_2) or torch.isinf(s_phase_2):
+        s_phase_2 = torch.tensor(config.clamp_min, device=w_real.device)
+    if torch.isnan(s_phase_3) or torch.isinf(s_phase_3):
+        s_phase_3 = torch.tensor(config.clamp_min, device=w_real.device)
+
+    qw_real = torch.zeros_like(w_real)
+    qw_imag = torch.zeros_like(w_imag)
+
+    tmp = math.sqrt(3) / 2.0
+    qw_real[phase_1] += 1.0 * s_phase_1
+    qw_real[phase_2] += -0.5 * s_phase_2
+    qw_imag[phase_2] += tmp * s_phase_2
+    qw_real[phase_3] += -0.5 * s_phase_3
+    qw_imag[phase_3] += -tmp * s_phase_3
+
+    return qw_real.to(w_real.dtype), qw_imag.to(w_imag.dtype)
+
 def apply_complex_inspired_quantization(model: nn.Module):
     """Apply complex-inspired quantization to real-valued model"""
     print("Applying complex-inspired quantization (PhaseQuant-based)...")
@@ -57,6 +108,44 @@ def apply_complex_inspired_quantization(model: nn.Module):
 
         U_re_q, U_im_q = quantize_complex_tensor(U_re, U_im)
         W_re_q, W_im_q = quantize_complex_tensor(W_re, W_im)
+
+        A11_q = W_re_q + U_re_q
+        A12_q = W_im_q - U_im_q
+        A21_q = W_im_q + U_im_q
+        A22_q = -W_re_q + U_re_q
+
+        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
+        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
+        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
+
+        module.weight.data = A_quant.to(A.dtype)
+
+    model.apply(lambda module: quantize_linear_layer(module) if isinstance(module, nn.Linear) else None)
+    print("Complex-inspired quantization completed.")
+    return model
+
+def apply_fairy2w_quantization(model: nn.Module):
+    """Apply complex-inspired quantization to real-valued model"""
+    print("Applying fairy2w quantization (PhaseQuant-based)...")
+    
+    @torch.no_grad()
+    def quantize_linear_layer(module: nn.Linear):
+        A = module.weight.data
+        if A.shape[0] % 2 != 0 or A.shape[1] % 2 != 0:
+            print(f"  -> Skipping layer (non-even dimensions): {A.shape}")
+            return
+
+        n, m = A.shape[0] // 2, A.shape[1] // 2
+        A11, A12 = A[:n, :m], A[:n, m:]
+        A21, A22 = A[n:, :m], A[n:, m:]
+
+        U_re = 0.5 * (A11 + A22)
+        U_im = 0.5 * (A21 - A12)
+        W_re = 0.5 * (A11 - A22)
+        W_im = 0.5 * (A12 + A21)
+
+        U_re_q, U_im_q = quantize_complex_tensor_fairy2w(U_re, U_im)
+        W_re_q, W_im_q = quantize_complex_tensor_fairy2w(W_re, W_im)
 
         A11_q = W_re_q + U_re_q
         A12_q = W_im_q - U_im_q
@@ -262,7 +351,6 @@ class PhaseQuantSTE_V2(torch.autograd.Function):
     def backward(ctx, grad_real, grad_imag):
         return grad_real, grad_imag
 
-
 class PhaseQuantSTE_V3(torch.autograd.Function):
     """Three-step residual quantization"""
 
@@ -283,7 +371,6 @@ class PhaseQuantSTE_V3(torch.autograd.Function):
     def backward(ctx, grad_real, grad_imag):
         return grad_real, grad_imag
 
-
 class PhaseQuantSTE_V4(torch.autograd.Function):
     """Four-step residual quantization"""
 
@@ -299,6 +386,144 @@ class PhaseQuantSTE_V4(torch.autograd.Function):
         error_real_3 = error_real_2 - qw_real_o3
         error_imag_3 = error_imag_2 - qw_imag_o3
         qw_real_o4, qw_imag_o4 = PhaseQuantSTE.apply(error_real_3, error_imag_3)
+        qw_real = qw_real_o1 + qw_real_o2 + qw_real_o3 + qw_real_o4
+        qw_imag = qw_imag_o1 + qw_imag_o2 + qw_imag_o3 + qw_imag_o4
+        return qw_real, qw_imag
+
+    @staticmethod
+    def backward(ctx, grad_real, grad_imag):
+        return grad_real, grad_imag
+
+class Fairy2w_PhaseQuantSTE(torch.autograd.Function):
+    """Fairy2w-Phase STE: quantize in forward, pass gradients in backward"""
+    @staticmethod
+    def forward(ctx, w_real, w_imag):
+        config = QuantizationConfig()
+        argument = torch.angle(w_real + 1j * w_imag)
+        norm = torch.abs(w_real + 1j * w_imag)
+        mean_norm = norm.mean()
+        threshold = config.mu * mean_norm
+
+        nonzeros = (norm >= threshold)
+        # zeros = (norm < threshold)
+        phase_1 = (argument > -math.pi / 3) & (argument <= math.pi / 3) & nonzeros          # 中心在 0°
+        phase_2 = (argument > math.pi / 3) & (argument <= math.pi) & nonzeros               # 中心在 120°
+        phase_3 = (argument <= -math.pi / 3) & nonzeros               # 中心在 240°
+
+        s_phase_1 = norm[phase_1].mean() if phase_1.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_2 = norm[phase_2].mean() if phase_2.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_3 = norm[phase_3].mean() if phase_3.any() else torch.tensor(0.0, device=w_real.device)
+        
+        s_phase_1 = torch.clamp(s_phase_1, min=config.clamp_min)
+        s_phase_2 = torch.clamp(s_phase_2, min=config.clamp_min)
+        s_phase_3 = torch.clamp(s_phase_3, min=config.clamp_min)
+
+        qw_real = torch.zeros_like(w_real)
+        qw_imag = torch.zeros_like(w_imag)
+
+        tmp = math.sqrt(3) / 2.0
+        qw_real[phase_1] += 1.0 * s_phase_1
+        qw_real[phase_2] += -0.5 * s_phase_2
+        qw_imag[phase_2] += tmp * s_phase_2
+        qw_real[phase_3] += -0.5 * s_phase_3
+        qw_imag[phase_3] += -tmp * s_phase_3
+
+        return qw_real.to(w_real.dtype), qw_imag.to(w_imag.dtype)
+
+    @staticmethod
+    def backward(ctx, grad_w_real, grad_w_imag):
+        return grad_w_real, grad_w_imag
+class Fairy2w_PhaseQuantSTE_Alter(torch.autograd.Function):
+    """Use 60°, 180°, 300°"""
+    @staticmethod
+    def forward(ctx, w_real, w_imag):
+        config = QuantizationConfig()
+        argument = torch.angle(w_real + 1j * w_imag)
+        norm = torch.abs(w_real + 1j * w_imag)
+        mean_norm = norm.mean()
+        threshold = config.mu * mean_norm
+
+        nonzeros = (norm >= threshold)
+        phase_1 = (argument > 0) & (argument <= 2 * math.pi / 3) & nonzeros
+        phase_2 = ((argument > 2 * math.pi / 3) | (argument <= -2 * math.pi / 3)) & nonzeros
+        phase_3 = (argument > -2 * math.pi / 3) & (argument <= 0) & nonzeros
+
+        s_phase_1 = norm[phase_1].mean() if phase_1.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_2 = norm[phase_2].mean() if phase_2.any() else torch.tensor(0.0, device=w_real.device)
+        s_phase_3 = norm[phase_3].mean() if phase_3.any() else torch.tensor(0.0, device=w_real.device)
+        
+        s_phase_1 = torch.clamp(s_phase_1, min=config.clamp_min)
+        s_phase_2 = torch.clamp(s_phase_2, min=config.clamp_min)
+        s_phase_3 = torch.clamp(s_phase_3, min=config.clamp_min)
+
+        qw_real = torch.zeros_like(w_real)
+        qw_imag = torch.zeros_like(w_imag)
+
+        tmp = math.sqrt(3) / 2.0
+        qw_real[phase_1] += 0.5 * s_phase_1
+        qw_imag[phase_1] += tmp * s_phase_1
+        qw_real[phase_2] += -1.0 * s_phase_2
+        qw_real[phase_3] += 0.5 * s_phase_3
+        qw_imag[phase_3] += -tmp * s_phase_3
+
+        return qw_real.to(w_real.dtype), qw_imag.to(w_imag.dtype)
+
+    @staticmethod
+    def backward(ctx, grad_w_real, grad_w_imag):
+        return grad_w_real, grad_w_imag
+
+class Fairy2w_PhaseQuantSTE_V2(torch.autograd.Function):
+    """Two-step residual quantization"""
+
+    @staticmethod
+    def forward(ctx, w_real: torch.Tensor, w_imag: torch.Tensor):
+        qw_real_o1, qw_imag_o1 = Fairy2w_PhaseQuantSTE.apply(w_real, w_imag)
+        error_real = w_real - qw_real_o1
+        error_imag = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = Fairy2w_PhaseQuantSTE_Alter.apply(error_real, error_imag)
+        qw_real = qw_real_o1 + qw_real_o2
+        qw_imag = qw_imag_o1 + qw_imag_o2
+        return qw_real, qw_imag
+
+    @staticmethod
+    def backward(ctx, grad_real, grad_imag):
+        return grad_real, grad_imag
+
+class Fairy2w_PhaseQuantSTE_V3(torch.autograd.Function):
+    """Three-step residual quantization"""
+
+    @staticmethod
+    def forward(ctx, w_real: torch.Tensor, w_imag: torch.Tensor):
+        qw_real_o1, qw_imag_o1 = Fairy2w_PhaseQuantSTE.apply(w_real, w_imag)
+        error_real_1 = w_real - qw_real_o1
+        error_imag_1 = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = Fairy2w_PhaseQuantSTE_Alter.apply(error_real_1, error_imag_1)
+        error_real_2 = error_real_1 - qw_real_o2
+        error_imag_2 = error_imag_1 - qw_imag_o2
+        qw_real_o3, qw_imag_o3 = Fairy2w_PhaseQuantSTE.apply(error_real_2, error_imag_2)
+        qw_real = qw_real_o1 + qw_real_o2 + qw_real_o3
+        qw_imag = qw_imag_o1 + qw_imag_o2 + qw_imag_o3
+        return qw_real, qw_imag
+
+    @staticmethod
+    def backward(ctx, grad_real, grad_imag):
+        return grad_real, grad_imag
+
+class Fairy2w_PhaseQuantSTE_V4(torch.autograd.Function):
+    """Four-step residual quantization"""
+
+    @staticmethod
+    def forward(ctx, w_real: torch.Tensor, w_imag: torch.Tensor):
+        qw_real_o1, qw_imag_o1 = Fairy2w_PhaseQuantSTE.apply(w_real, w_imag)
+        error_real_1 = w_real - qw_real_o1
+        error_imag_1 = w_imag - qw_imag_o1
+        qw_real_o2, qw_imag_o2 = Fairy2w_PhaseQuantSTE_Alter.apply(error_real_1, error_imag_1)
+        error_real_2 = error_real_1 - qw_real_o2
+        error_imag_2 = error_imag_1 - qw_imag_o2
+        qw_real_o3, qw_imag_o3 = Fairy2w_PhaseQuantSTE.apply(error_real_2, error_imag_2)
+        error_real_3 = error_real_2 - qw_real_o3
+        error_imag_3 = error_imag_2 - qw_imag_o3
+        qw_real_o4, qw_imag_o4 = Fairy2w_PhaseQuantSTE_Alter.apply(error_real_3, error_imag_3)
         qw_real = qw_real_o1 + qw_real_o2 + qw_real_o3 + qw_real_o4
         qw_imag = qw_imag_o1 + qw_imag_o2 + qw_imag_o3 + qw_imag_o4
         return qw_real, qw_imag
