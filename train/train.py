@@ -2,7 +2,7 @@ import os
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-MODEL_PATH = "meta-llama/Llama-2-7b-hf"
+MODEL_PATH = "/root/llama2-7b-hf"
 
 import time
 from datasets import load_from_disk, concatenate_datasets
@@ -13,11 +13,11 @@ from transformers import (
     DataCollatorForLanguageModeling,
 )
 import math
-from transformers.data.data_collator import MyDataCollatorForLanguageModeling
+from mydatacollator import MyDataCollatorForLanguageModeling
 from torch.optim.lr_scheduler import LambdaLR
 from transformers.trainer_utils import get_last_checkpoint
 from transformers import AutoModelForCausalLM
-from fairy2i.codes.qat_modules import replace_modules_for_qat, METHOD_MAP
+from model_module.qat_modules import replace_modules_for_qat, METHOD_MAP
 import argparse
 from transformers.trainer_utils import total_processes_number
 from transformers.trainer_callback import TrainerCallback
@@ -257,7 +257,8 @@ set_seed(42)
 GLOBAL_BATCH_SIZE = 512
 PER_DEVICE_BS = 4
 MAX_TOKEN = 104_857_600_000*0.3
-TRAIN_NAME = "1208_train_30pct_v2_formal_lr3e-5_wsd2_skip_lm_head" 
+
+TRAIN_NAME = "ckpt/0212_fairy2w_mu=0.4_skip_lm_head_Projection_6e-5-300-Eisenstein-low" 
 OUTPUT_DIR = f"./{TRAIN_NAME}/results"
 OUTPUT_MODEL_DIR = f"./{TRAIN_NAME}/saved_model"
 LOGGING_DIR = f"./{TRAIN_NAME}/logs"
@@ -270,7 +271,7 @@ print(
 )
 all_parts = []
 for name in SUBSET:
-    ds = load_from_disk(f"./test_data/final_100B_data_new_withoutlabel/{name}")
+    ds = load_from_disk(f"/root/train_dataset/{name}")
     all_parts.append(ds)
 train_dataset = concatenate_datasets(all_parts)
 num_samples = len(train_dataset)
@@ -298,9 +299,9 @@ training_args = TrainingArguments(
     max_steps=MAX_STEPS,
     output_dir=OUTPUT_DIR,
     per_device_train_batch_size=PER_DEVICE_BS,
-    learning_rate=3e-5,
+    learning_rate=6e-5,
     max_grad_norm=2.0,
-    warmup_steps=375,
+    warmup_steps=300,
     weight_decay=0,
     logging_dir=LOGGING_DIR,
     save_strategy="steps",
@@ -340,7 +341,7 @@ if accelerator.is_main_process:
     swanlab.init(
         workspace="ComplexTrain",
         project="complexnet-training-0606",
-        name=f"{time.strftime('%m%d%H%M')}-30pct_re-v2-formal_lr3e-5_wsd2_skip_lm_head",
+        name=f"{time.strftime('%m%d%H%M')}-fairy2w-skip-lm-head-mu=0.4-Projection-wsd-6e-5-Eisenstein-low",
         config=cfg,
         settings=Settings(
             requirements_collect=False,

@@ -1,6 +1,7 @@
 #!/bin/bash
 set -x
 # ========== Configurable Parameters ==========
+export PYTHONPATH=$PYTHONPATH:/root/Fairy2w-W2
 export NCCL_IB_DISABLE=0
 export NCCL_SOCKET_IFNAME=eth0
 export NCCL_IB_HCA=ib7s
@@ -18,7 +19,7 @@ echo NCCL_TIMEOUT=${NCCL_TIMEOUT}
 # ========== Set Environment Variables ==========
 
 source /root/.bashrc
-conda activate newcomplex
+conda activate fairytow
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # ========== Launch Training ==========
@@ -30,7 +31,8 @@ accelerate launch \
   --num_machines $nnodes \
   --num_processes ${num_processes} \
   ./train.py \
-  --quant_method complex_phase_v2 \
-  # --skip_lm_head \ (default False, i.e., lm_head will be replaced)
+  --quant_method fairy2w_phase_v2 \
+  --skip_lm_head \ 
+  #(default False, i.e., lm_head will be replaced)
 
 

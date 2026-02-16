@@ -1,3 +1,19 @@
+import multiprocessing as mp
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union, Mapping
+
+import numpy as np
+import torch
+
+# 核心 Transformers 组件
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.data.data_collator import (
+    DataCollatorMixin,
+    _numpy_collate_batch,
+    _tf_collate_batch,
+    _torch_collate_batch,
+    pad_without_fast_tokenizer_warning,
+)
 @dataclass
 class MyDataCollatorForLanguageModeling(DataCollatorMixin):
     """

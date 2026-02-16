@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from quantization import BitNetQuantSTE, PhaseQuantSTE, PhaseQuantSTE_V2, PhaseQuantSTE_V3, PhaseQuantSTE_V4, Fairy2w_PhaseQuantSTE, Fairy2w_PhaseQuantSTE_V2, Fairy2w_PhaseQuantSTE_V3, Fairy2w_PhaseQuantSTE_V4, QuantizationConfig
+
+from Fairy2w.model_module.kernel import fairytow_quant_V2
+from .quantization import BitNetQuantSTE, PhaseQuantSTE, PhaseQuantSTE_V2, PhaseQuantSTE_V3, PhaseQuantSTE_V4, Fairy2w_PhaseQuantSTE, Fairy2w_PhaseQuantSTE_V2, Fairy2w_PhaseQuantSTE_V3, Fairy2w_PhaseQuantSTE_V4, QuantizationConfig,Fairy2w_PhaseQuantSTE_V2_Eisenstein
 import math
 
 class QATLinearBitNet(nn.Linear):
@@ -53,6 +55,7 @@ class QATLinearComplexPhaseV2(nn.Linear):
             raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
 
     def forward(self, x):
+        # x = RMSNORM(x)
         A = self.weight
         n, m = A.shape[0] // 2, A.shape[1] // 2
         A11, A12 = A[:n, :m], A[:n, m:]
@@ -181,29 +184,14 @@ class QATLinearFairy2wPhaseV2(nn.Linear):
             raise ValueError("Complex-Phase QAT requires even in/out features for Linear layers.")
 
     def forward(self, x):
-        A = self.weight
-        n, m = A.shape[0] // 2, A.shape[1] // 2
-        A11, A12 = A[:n, :m], A[:n, m:]
-        A21, A22 = A[n:, :m], A[n:, m:]
-        
-        U_re = 0.5 * (A11 + A22)
-        U_im = 0.5 * (A21 - A12)
-        W_re = 0.5 * (A11 - A22)
-        W_im = 0.5 * (A12 + A21)
-        
-        U_re_q, U_im_q = Fairy2w_PhaseQuantSTE_V2.apply(U_re, U_im)
-        W_re_q, W_im_q = Fairy2w_PhaseQuantSTE_V2.apply(W_re, W_im)
-        
-        A11_q = W_re_q + U_re_q
-        A12_q = W_im_q - U_im_q
-        A21_q = W_im_q + U_im_q
-        A22_q = -W_re_q + U_re_q
-        
-        A_quant_top = torch.cat([A11_q, A12_q], dim=1)
-        A_quant_bottom = torch.cat([A21_q, A22_q], dim=1)
-        A_quant = torch.cat([A_quant_top, A_quant_bottom], dim=0)
 
-        return F.linear(x, A_quant, self.bias)
+        # a + bw -> c +dw
+        A = self.weight 
+        W_final = fairytow_quant_V2(A)
+
+        # 3. 终极一击：单次线性变换
+        # 没有任何 slice, 没有任何后处理组合，直接出结果
+        return F.linear(x, W_final, self.bias)
 
 class QATLinearFairy2wPhaseV3(nn.Linear):
     """Complex-Phase V3 QAT linear layer (2-step residual)"""
@@ -313,7 +301,6 @@ def replace_modules_for_qat(model: nn.Module, method: str, skip_lm_head: bool = 
             new_module.weight.data.copy_(module.weight.data)
             if module.bias is not None:
                 new_module.bias.data.copy_(module.bias.data)
-            
             setattr(model, name, new_module)
 
 class InferenceOptimizedBitNet(nn.Linear):
