@@ -229,6 +229,132 @@ def get_custom_wsd_lr_lambda(
     return lr_lambda
 
 
+
+def get_bitnet_wd_cos_lr_lambda(
+    total_steps,
+    warmup_steps,
+    jump_ratio=0.8,
+    jump_multiplier=0.1,
+    min_lr_ratio=0.0
+):
+    """
+    1. Warmup: 线性提升至 1.0
+    2. Phase 1 Cosine: 从 1.0 开始余弦下降，直到 total_steps * jump_ratio
+    3. Jump: 在 jump_ratio 处，学习率突变为当前的 jump_multiplier 倍
+    4. Phase 2 Cosine: 从突变后的值开始，余弦下降直到 0
+    
+    Args:
+        total_steps: 总训练步数
+        warmup_steps: 预热步数
+        jump_ratio: 突变发生的比例位置 (a)
+        jump_multiplier: 突变的倍数 (b)
+        min_lr_ratio: 最终衰减到的最小学习率比例 (通常为 0)
+    """
+    
+    jump_step = int(total_steps * jump_ratio)
+    
+    def lr_lambda(current_step: int):
+        # --- 阶段 1: Warmup ---
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        
+        # --- 阶段 2: 第一段余弦退火 (Warmup 结束到 Jump 点) ---
+        if current_step < jump_step:
+            # 计算这一段的进度 (0.0 到 1.0)
+            # 注意：这里的余弦通常是以整个训练周期为底色的，或者是到 jump_step 为止
+            # 按照通俗理解，第一段余弦通常指向 0，但在 jump_step 处被截断
+            progress = (current_step - warmup_steps) / (total_steps - warmup_steps)
+            cosine_val = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return max(min_lr_ratio, cosine_val)
+        
+        # --- 阶段 3: 突变与第二段余弦退火 (Jump 点到 结束) ---
+        # 1. 首先计算 jump 瞬间之前的那个余弦值
+        before_jump_progress = (jump_step - warmup_steps) / (total_steps - warmup_steps)
+        val_at_jump = 0.5 * (1.0 + math.cos(math.pi * before_jump_progress))
+        
+        # 2. 计算突变后的起点
+        new_start_val = val_at_jump * jump_multiplier
+        
+        # 3. 计算在第二阶段内部的进度
+        second_phase_steps = total_steps - jump_step
+        if second_phase_steps <= 0:
+            return new_start_val
+            
+        current_phase_progress = (current_step - jump_step) / second_phase_steps
+        
+        # 4. 从 new_start_val 余弦衰减到 0
+        cosine_val = new_start_val * 0.5 * (1.0 + math.cos(math.pi * current_phase_progress))
+        
+        return max(min_lr_ratio, cosine_val)
+
+    return lr_lambda
+
+
+
+
+def get_bitnet_wd_linear_lr_lambda(
+    total_steps,
+    warmup_steps = 300,
+    jump_ratio=0.8,        # 参数 a
+    jump_multiplier=0.1,   # 参数 b
+    phase1_end_ratio=0.5,  # 参数 m (第一阶段结束时降到的比例)
+):
+    """
+    1. Warmup: 0 -> 1.0 (线性)
+    2. Linear Decay 1: 1.0 -> m (在 total_steps * a 处到达)
+    3. Jump: 瞬间变为 m * b
+    4. Linear Decay 2: m * b -> 0 (线性直到结束)
+    
+    Args:
+        total_steps: 总步数
+        warmup_steps: 预热步数
+        jump_ratio: 突变发生的比例位置 (a)
+        jump_multiplier: 突变的倍数 (b)
+        phase1_end_ratio: 第一阶段线性下降结束时的目标比例 (m)
+    """
+    jump_step = int(total_steps * jump_ratio)
+    
+    # 预检查，防止除以 0
+    assert jump_step > warmup_steps, "jump_ratio sets the jump_step before warmup ends."
+
+    def lr_lambda(current_step: int):
+        # --- 阶段 1: Warmup ---
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        
+        # --- 阶段 2: 第一段线性下降 (1.0 -> m) ---
+        if current_step < jump_step:
+            # 计算在第一段衰减期内的进度
+            # 从 warmup_steps(0.0) 到 jump_step(1.0)
+            progress = (current_step - warmup_steps) / (jump_step - warmup_steps)
+            # 线性插值公式: start + (end - start) * progress
+            return 1.0 + (phase1_end_ratio - 1.0) * progress
+        
+        # --- 阶段 3: 突变与第二段线性下降 (m*b -> 0) ---
+        # 突变后的起点值
+        start_val_after_jump = phase1_end_ratio * jump_multiplier
+        
+        if current_step >= total_steps:
+            return 0.0
+            
+        # 计算在第二阶段内部的进度
+        # 从 jump_step(0.0) 到 total_steps(1.0)
+        second_phase_steps = total_steps - jump_step
+        progress = (current_step - jump_step) / second_phase_steps
+        
+        # 从 start_val_after_jump 线性下降到 0
+        return start_val_after_jump * (1.0 - progress)
+
+    return lr_lambda
+
+
+
+
+
+
+
+
+
 parser = argparse.ArgumentParser(description="Train model with specified QAT method")
 parser.add_argument(
     "--quant_method",
@@ -258,7 +384,7 @@ GLOBAL_BATCH_SIZE = 512
 PER_DEVICE_BS = 4
 MAX_TOKEN = 104_857_600_000*0.3
 
-TRAIN_NAME = "ckpt/0212_fairy2w_mu=0.4_skip_lm_head_Projection_6e-5-300-Eisenstein-low" 
+TRAIN_NAME = "ckpt/0216_fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1e-4" 
 OUTPUT_DIR = f"./{TRAIN_NAME}/results"
 OUTPUT_MODEL_DIR = f"./{TRAIN_NAME}/saved_model"
 LOGGING_DIR = f"./{TRAIN_NAME}/logs"
@@ -299,7 +425,7 @@ training_args = TrainingArguments(
     max_steps=MAX_STEPS,
     output_dir=OUTPUT_DIR,
     per_device_train_batch_size=PER_DEVICE_BS,
-    learning_rate=6e-5,
+    learning_rate=1e-4,
     max_grad_norm=2.0,
     warmup_steps=300,
     weight_decay=0,
@@ -341,7 +467,7 @@ if accelerator.is_main_process:
     swanlab.init(
         workspace="ComplexTrain",
         project="complexnet-training-0606",
-        name=f"{time.strftime('%m%d%H%M')}-fairy2w-skip-lm-head-mu=0.4-Projection-wsd-6e-5-Eisenstein-low",
+        name=f"{time.strftime('%m%d%H%M')}-fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1e-4",
         config=cfg,
         settings=Settings(
             requirements_collect=False,
@@ -359,15 +485,12 @@ class CustomTrainer(Trainer):
         if optimizer is None:
             optimizer = self.optimizer
 
-        lr_lambda = get_custom_wsd_lr_lambda(
-            total=num_training_steps,
+        lr_lambda = get_bitnet_wd_linear_lr_lambda(
+            total_steps=total_steps,
             warmup_steps=300,
-            stable_steps=8000,
-            decay_steps=2000,
-            final_lr_ratio=0.1667,
-            second_decay_start=19000,
-            second_decay_steps=1000,
-            second_final_lr_ratio=0.03333,
+            jump_ratio=0.5,
+            jump_multiplier=0.667,
+            phase1_end_ratio=0.5,
         )
 
         scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
