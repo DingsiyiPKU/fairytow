@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from Fairy2w.model_module.kernel import fairytow_quant_V2
+from Fairy2w.model_module.kernel import fairytow_quant_V2,QATLinearComplexPhaseV2_forward
 from .quantization import BitNetQuantSTE, PhaseQuantSTE, PhaseQuantSTE_V2, PhaseQuantSTE_V3, PhaseQuantSTE_V4, Fairy2w_PhaseQuantSTE, Fairy2w_PhaseQuantSTE_V2, Fairy2w_PhaseQuantSTE_V3, Fairy2w_PhaseQuantSTE_V4, QuantizationConfig,Fairy2w_PhaseQuantSTE_V2_Eisenstein
 import math
 
@@ -186,12 +186,8 @@ class QATLinearFairy2wPhaseV2(nn.Linear):
     def forward(self, x):
 
         # a + bw -> c +dw
-        A = self.weight 
-        W_final = fairytow_quant_V2(A)
-
-        # 3. 终极一击：单次线性变换
-        # 没有任何 slice, 没有任何后处理组合，直接出结果
-        return F.linear(x, W_final, self.bias)
+        A = self.weight
+        return QATLinearComplexPhaseV2_forward(x, A, self.bias)
 
 class QATLinearFairy2wPhaseV3(nn.Linear):
     """Complex-Phase V3 QAT linear layer (2-step residual)"""

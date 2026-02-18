@@ -223,13 +223,37 @@ def fairytow_combine(U_re,U_im,W_re,W_im,U_res_re,U_res_im,W_res_re,W_res_im):
     grid = (NUM_SMS,)
     fairytow_combine_kernel[grid](B,U_re,U_im,W_re,W_im,U_res_re,U_res_im,W_res_re,W_res_im,B_row_stride,B_col_stride,M,N,NUM_SMS)
     return B
-    
+
+
+
+def QATLinearComplexPhaseV2_quantize(A:torch.Tensor):
+        U_re,U_im,W_re,W_im = fairytow_split(A)
+        U_re, U_im, U_res_re,U_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein(U_re,U_im)
+        W_re, W_im, W_res_re,W_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein(W_re,W_im)
+        B = fairytow_combine(U_re,U_im,W_re,W_im,U_res_re,U_res_im,W_res_re,W_res_im)
+        return B
+
+
+
+
+@torch.compile(fullgraph=True, mode="max-autotune")
+def QATLinearComplexPhaseV2_forward(x:torch.Tensor,A:torch.Tensor,bias : torch.Tensor = None):
+        B = (QATLinearComplexPhaseV2_quantize(A) - A).detach() + A
+        return F.linear(x, B, bias) 
+
+
+
+
+
+
+
+
 
 class fairytow_quant_V2(torch.autograd.Function):
     def forward(self, A):
         U_re,U_im,W_re,W_im = fairytow_split(A)
-        U_re, U_im, U_res_re,U_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein.apply(U_re,U_im)
-        W_re, W_im, W_res_re,W_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein.apply(W_re,W_im)
+        U_re, U_im, U_res_re,U_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein(U_re,U_im)
+        W_re, W_im, W_res_re,W_res_im = Fairy2w_PhaseQuantSTE_V2_Eisenstein(W_re,W_im)
         B = fairytow_combine(U_re,U_im,W_re,W_im,U_res_re,U_res_im,W_res_re,W_res_im)
         return B
     
@@ -254,8 +278,8 @@ def check(A):
         W1 = (2 * A11 + A12 - A21 - 2 * A22) / 3
         W2 = (A11 + 2 * A12 + A21 - A22) / 3
 
-        U1, U2,U3,U4 = Fairy2w_PhaseQuantSTE_V2_Eisenstein.apply(U1, U2)
-        W1, W2, W3, W4 = Fairy2w_PhaseQuantSTE_V2_Eisenstein.apply(W1, W2)
+        U1, U2,U3,U4 = Fairy2w_PhaseQuantSTE_V2_Eisenstein(U1, U2)
+        W1, W2, W3, W4 = Fairy2w_PhaseQuantSTE_V2_Eisenstein(W1, W2)
         U1 = U1 + U3
         U2 = U2 + U4
         W1 = W1 + W3
@@ -286,11 +310,11 @@ configs = [
         x_names=["M"],  
         x_vals=[256 * i for i in range(6, 33)],  
         line_arg="provider",  
-        line_vals=["triton","naive"],  
-        line_names=["triton","naive"],  
-        styles=[("blue","-"),("green", "-")], 
+        line_vals=["triton","complie","naive"],  
+        line_names=["triton","complie","naive"],  
+        styles=[("blue","-"),("green", "-"),("red", "-")], 
         ylabel='MS',  
-        plot_name="fairytow_quant-performance-MS", 
+        plot_name="fairytow_quant-performance-MS-complie", 
         args={},  
     )
 ]
@@ -302,12 +326,14 @@ def benchmark_MS(M, provider):
     quantizer = fairytow_quant_V2.apply
 
     quantiles = [0.5, 0.2, 0.8]
-    #ms2, min_ms, max_ms = triton.testing.do_bench(lambda: F.linear(A_real,B_real), quantiles=quantiles) 
-    ms2 = 0
+    ms2, min_ms, max_ms = triton.testing.do_bench(lambda: F.linear(A_real,B_real), quantiles=quantiles) 
     if provider == 'triton':
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: quantizer(A_real), quantiles=quantiles) 
     if provider == 'naive':
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: check(A_real), quantiles=quantiles) 
+    if provider == 'complie':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: QATLinearComplexPhaseV2_forward(A_real,B_real), quantiles=quantiles)
+        ms = ms - ms2
     perf = lambda ms: ms+ms2
     
     return perf(ms), perf(max_ms), perf(min_ms)
@@ -323,15 +349,17 @@ def benchmark_MS(M, provider):
 
 
 if __name__ == "__main__":
-    A = torch.randn((4096,4096),dtype=torch.float32,device="cuda")
+    A = torch.randn((4096,4096),dtype=torch.bfloat16,device="cuda")
     B = fairytow_quant_V2.apply(A)
     C = check(A)
     print((B-C).abs().max())
     print((B-C).abs().mean())
+    
+    QATLinearComplexPhaseV2_forward(A,B)
     print("Test passed!")
     benchmark_MS.run(save_path='/root/data',show_plots=True, print_data=True)
 
 
 
 
-#python -m Fairy2w.train.kernel 
+#python -m Fairy2w.model_module.kernel 

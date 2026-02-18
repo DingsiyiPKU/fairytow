@@ -1,7 +1,8 @@
 #!/bin/bash
 set -x
 # ========== Configurable Parameters ==========
-export PYTHONPATH=$PYTHONPATH:/root/Fairy2w-W2
+export PYTHONPATH=$PYTHONPATH:/root
+export PYTHONPATH=$PYTHONPATH:/root/Fairy2w
 export NCCL_IB_DISABLE=0
 export NCCL_SOCKET_IFNAME=eth0
 export NCCL_IB_HCA=ib7s

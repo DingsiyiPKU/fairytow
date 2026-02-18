@@ -607,13 +607,8 @@ class Fairy2w_PhaseQuantSTE_V4(torch.autograd.Function):
 
 
 
-class Fairy2w_PhaseQuantSTE_Eisenstein(torch.autograd.Function):
-    """
-    Fairy2w-Phase STE: 基于 Eisenstein 基底的不对称斜坐标分解量化
-    输入: a, b (满足 z = a + b*omega)
-    """
-    @staticmethod
-    def forward(ctx, a, b):
+def Fairy2w_PhaseQuantSTE_Eisenstein(a,b):
+
         config = QuantizationConfig()
         
         # 1. 区域判定 (扇区划分)
@@ -663,18 +658,10 @@ class Fairy2w_PhaseQuantSTE_Eisenstein(torch.autograd.Function):
 
         return qa.to(a.dtype), qb.to(b.dtype)
 
-    @staticmethod
-    def backward(ctx, grad_qa, grad_qb):
-        # Straight-Through Estimator (STE)
-        # 直接传递梯度给 a 和 b
-        return grad_qa, grad_qb
-    
-    
 
-class Fairy2w_PhaseQuantSTE_Alter_Eisenstein(torch.autograd.Function):
-    """Use 60°, 180°, 300°"""
-    @staticmethod
-    def forward(ctx, a, b):
+    
+def Fairy2w_PhaseQuantSTE_Alter_Eisenstein(a,b):
+
         config = QuantizationConfig()
         # 1. 计算三个方向的投影 (Eisenstein 线性组合)
         # 相比 real/imag 坐标系，这里省去了 sqrt(3) 的乘法，仅需 0.5 倍率
@@ -720,23 +707,11 @@ class Fairy2w_PhaseQuantSTE_Alter_Eisenstein(torch.autograd.Function):
 
         return qa.to(a.dtype), qb.to(b.dtype)
 
-    @staticmethod
-    def backward(ctx, grad_qa, grad_qb):
-        return grad_qa, grad_qb
-    
-    
-    
-class Fairy2w_PhaseQuantSTE_V2_Eisenstein(torch.autograd.Function):
-    """Two-step residual quantization"""
 
-    @staticmethod
-    def forward(ctx, w_real: torch.Tensor, w_imag: torch.Tensor):
-        qw_real_o1, qw_imag_o1 = Fairy2w_PhaseQuantSTE_Eisenstein.apply(w_real, w_imag)
+    
+def Fairy2w_PhaseQuantSTE_V2_Eisenstein(w_real: torch.Tensor, w_imag: torch.Tensor):
+        qw_real_o1, qw_imag_o1 = Fairy2w_PhaseQuantSTE_Eisenstein(w_real, w_imag)
         error_real = w_real - qw_real_o1
         error_imag = w_imag - qw_imag_o1
-        qw_real_o2, qw_imag_o2 = Fairy2w_PhaseQuantSTE_Alter_Eisenstein.apply(error_real, error_imag)
+        qw_real_o2, qw_imag_o2 = Fairy2w_PhaseQuantSTE_Alter_Eisenstein(error_real, error_imag)
         return qw_real_o1.to(w_real.dtype), qw_imag_o1.to(w_real.dtype), qw_real_o2.to(w_real.dtype), qw_imag_o2.to(w_real.dtype)
-
-    @staticmethod
-    def backward(ctx, grad_real, grad_imag):
-        return grad_real, grad_imag

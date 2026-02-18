@@ -17,7 +17,7 @@ from mydatacollator import MyDataCollatorForLanguageModeling
 from torch.optim.lr_scheduler import LambdaLR
 from transformers.trainer_utils import get_last_checkpoint
 from transformers import AutoModelForCausalLM
-from model_module.qat_modules import replace_modules_for_qat, METHOD_MAP
+from Fairy2w.model_module.qat_modules import replace_modules_for_qat, METHOD_MAP
 import argparse
 from transformers.trainer_utils import total_processes_number
 from transformers.trainer_callback import TrainerCallback
