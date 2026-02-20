@@ -236,7 +236,7 @@ def QATLinearComplexPhaseV2_quantize(A:torch.Tensor):
 
 
 
-@torch.compile(fullgraph=True, mode="max-autotune")
+@torch.compile(mode="default")
 def QATLinearComplexPhaseV2_forward(x:torch.Tensor,A:torch.Tensor,bias : torch.Tensor = None):
         B = (QATLinearComplexPhaseV2_quantize(A) - A).detach() + A
         return F.linear(x, B, bias) 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 class QuantizationConfig:
     # Quant 参数
     clamp_min: float = 1e-6
-    mu: float = 0.4 # 
+    mu: float = 0.5 # 
 
 
 @torch.no_grad()

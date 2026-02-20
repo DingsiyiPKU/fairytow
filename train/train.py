@@ -25,6 +25,9 @@ import itertools
 import torch
 from transformers import set_seed
 from accelerate import Accelerator
+
+torch._inductor.config.cudagraphs = False
+
 # from swanlab.data.settings import Settings
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 if tokenizer.pad_token is None:
@@ -381,10 +384,10 @@ torch.cuda.manual_seed_all(42)
 set_seed(42)
 
 GLOBAL_BATCH_SIZE = 512
-PER_DEVICE_BS = 4
+PER_DEVICE_BS = 16
 MAX_TOKEN = 104_857_600_000*0.3
 
-TRAIN_NAME = "ckpt/0216_fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1e-4" 
+TRAIN_NAME = "ckpt/0219_fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1.5e-4-mu=0.5" 
 OUTPUT_DIR = f"./{TRAIN_NAME}/results"
 OUTPUT_MODEL_DIR = f"./{TRAIN_NAME}/saved_model"
 LOGGING_DIR = f"./{TRAIN_NAME}/logs"
@@ -419,13 +422,13 @@ model = AutoModelForCausalLM.from_pretrained(
 print(f"Applying QAT method: {args.quant_method}")
 replace_modules_for_qat(model, args.quant_method, skip_lm_head=args.skip_lm_head)
 print("Model loaded.")
-model.gradient_checkpointing_enable()
+
 
 training_args = TrainingArguments(
     max_steps=MAX_STEPS,
     output_dir=OUTPUT_DIR,
     per_device_train_batch_size=PER_DEVICE_BS,
-    learning_rate=1e-4,
+    learning_rate=1.5e-4,
     max_grad_norm=2.0,
     warmup_steps=300,
     weight_decay=0,
@@ -438,6 +441,13 @@ training_args = TrainingArguments(
     report_to="swanlab",
     logging_steps=10,
     save_total_limit=100,
+    
+    torch_compile=True,                     # 启动编译
+    torch_compile_backend="inductor",       # 可选后端
+    torch_compile_mode="max-autotune",      # 可选模式
+    
+    gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
 )
 
 world_size = total_processes_number(training_args.local_rank)
@@ -467,7 +477,7 @@ if accelerator.is_main_process:
     swanlab.init(
         workspace="ComplexTrain",
         project="complexnet-training-0606",
-        name=f"{time.strftime('%m%d%H%M')}-fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1e-4",
+        name=f"{time.strftime('%m%d%H%M')}-fairy2w-WS-Linear-jump-0.667-phase1-end-0.5-1.5e-4-mu=0.5",
         config=cfg,
         settings=Settings(
             requirements_collect=False,
